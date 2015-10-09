@@ -1,15 +1,12 @@
 package sparkApp
 
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.{SparkConf, SparkContext}
-
+import org.apache.spark.{SparkContext, SparkConf}
 
 /**
- * Created by root on 15-10-8.
+ * Created by root on 15-10-9.
  */
-
-object SparkCC {
-
+object SparkCCSer {
   def main(args:Array[String]){
 
     val sparkConf = new SparkConf().setAppName(args(4))
@@ -22,7 +19,7 @@ object SparkCC {
       (parts(0).toInt, parts(1).toInt)
     }
 
-    val g = edges.groupByKey().persist(StorageLevel.MEMORY_AND_DISK)
+    val g = edges.groupByKey().persist(StorageLevel.MEMORY_AND_DISK_SER)
 
     var messages = g.map( eMsg => {
       (eMsg._1,eMsg._1)
@@ -43,5 +40,4 @@ object SparkCC {
     println("the count of connected components is "+result)
 
   }
-
 }
