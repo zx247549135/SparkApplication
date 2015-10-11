@@ -11,7 +11,7 @@ import org.apache.spark.{SparkContext, SparkConf}
  * Created by root on 15-10-10.
  */
 
-class KmeansChunk(numDest:Int) extends ByteArrayOutputStream() with Serializable{ self =>
+class KmeansChunk(size:Int,numDest:Int) extends ByteArrayOutputStream(size:Int) with Serializable{ self =>
 
   def getOriginal()= new Iterator[Array[Double]]{
     var offset = 0
@@ -102,8 +102,10 @@ object FlintKmeans {
     val convergeDist = args(2).toDouble
     val numDest = args(4).toInt
 
-    val data = lines.mapPartitions(dIter => {
-      val chunk = new KmeansChunk(numDest)
+    val data = lines.mapPartitions(dIters => {
+      val (dIter,dIter2) = dIters.duplicate
+      val length = dIter2.length
+      val chunk = new KmeansChunk(numDest*8*length,numDest)
       val dos = new DataOutputStream(chunk)
       while(dIter.hasNext){
         val line = dIter.next()
@@ -128,17 +130,23 @@ object FlintKmeans {
       val pointStats = data.mapPartitions( dIter => {
         val chunk = dIter.next()
         chunk.getPointStats(K,kPoints)
-      }).reduce((v1,v2) => {
-        val result = new Array[(Array[Double],Int)](K)
+      }).collect()
+
+      val result = new Array[(Array[Double],Int)](K)
+      for(i <- 0 until K){
+        result.update(i,(new Array[Double](numDest),0))
+      }
+
+      for(num <- 0 until pointStats.length){
+        val v = pointStats(num)
         for(i <- 0 until K){
           for(j <- 0 until numDest){
-            result(i)._1.update(i,v1(i)._1(i)+v2(i)._1(i))
+            result(i)._1(j) += v(i)._1(j)
           }
-          result.update(i,(result(i)._1,v1(i)._2+v2(i)._2))
+          result.update(i,(result(i)._1,result(i)._2+v(i)._2))
         }
-        result
-      })
-      val newPoints = pointStats.map( pair => {
+      }
+      val newPoints = result.map( pair => {
         for(i <- 0 until numDest){
           pair._1(i) = pair._1(i) / pair._2
         }

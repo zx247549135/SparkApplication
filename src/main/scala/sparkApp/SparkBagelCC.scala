@@ -3,6 +3,7 @@ package sparkApp
 import com.esotericsoftware.kryo.Kryo
 import org.apache.spark.bagel.{Combiner, Vertex, Message, Bagel}
 import org.apache.spark.serializer.KryoRegistrator
+import org.apache.spark.storage.StorageLevel
 import org.apache.spark.{HashPartitioner, SparkContext, SparkConf}
 
 /**
@@ -81,8 +82,6 @@ class CCKryoRegistrator extends KryoRegistrator {
 
 object SparkBagelCC {
 
-  val ordering = implicitly[Ordering[Int]]
-
   def main(args:Array[String]): Unit ={
 
     val sparkConf = new SparkConf().setAppName(args(3)).
@@ -115,9 +114,9 @@ object SparkBagelCC {
       (id,new CCVertex(id, list))
     })
     if (usePartitioner) {
-      vertices = vertices.partitionBy(new HashPartitioner(numPartitions)).cache
+      vertices = vertices.partitionBy(new HashPartitioner(numPartitions)).persist(StorageLevel.MEMORY_AND_DISK)
     } else {
-      vertices = vertices.cache
+      vertices = vertices.persist(StorageLevel.MEMORY_AND_DISK)
     }
     println("Done parsing input file.")
 
@@ -132,7 +131,7 @@ object SparkBagelCC {
           utils.computeWithCombiner(numVertices, epsilon))
 
     result.mapValues(_.value).saveAsTextFile(args(2))
-    val count = result.mapValues((_.value)).map(_._2).distinct().count()
+    val count = result.mapValues(_.value).values.distinct().count()
     println("the count of connected components is "+count)
     //result.foreach(t => println(t.toString()))
   }
