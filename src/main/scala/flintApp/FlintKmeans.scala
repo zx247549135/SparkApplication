@@ -31,45 +31,43 @@ class KmeansChunk(size:Int,numDest:Int) extends ByteArrayOutputStream(size:Int) 
     }
   }
 
-  def getPointStats(K:Int,kPoints:Array[Array[Double]]):Iterator[Array[(Array[Double],Int)]]={
+  def getPointStats(K:Int,kPoints:Array[Double]):Iterator[Array[Double]]={
     var offset = 0
-    val result = new Array[(Array[Double],Int)](K)
+    val result = new Array[Double](K*(numDest+1))
 
-    for(i <- 0 until K){
-      result.update(i,(new Array[Double](numDest),0))
-    }
-
-    def squaredDistance(startOffset:Int,second:Array[Double]): Double ={
-      var tmpOffset = startOffset
-      var result = 0.0
-      for( i <- 0 until second.length){
-        result += (WritableComparator.readDouble(buf,tmpOffset) - second(i))*(WritableComparator.readDouble(buf,tmpOffset)-second(i))
-        tmpOffset += 8
-      }
-      result
-    }
-
-    def computeClosest(startOffset:Int):Int={
-      var bestIndex = 0
-      var minDistance = Double.PositiveInfinity
-
-      for( i <- 0 until kPoints.length){
-        val tempDist = squaredDistance(startOffset,kPoints(i))
-        if(tempDist < minDistance){
-          minDistance = tempDist
-          bestIndex = i
-        }
-      }
-      bestIndex
-    }
+    var closestIndex = 0
+    var minDistance = Double.PositiveInfinity
+    var tmpOffset = 0
+    var tmpDist = 0.0
 
     while(offset < self.count){
-      val closestPoint = computeClosest(offset)
+
+      closestIndex = 0
+      minDistance = Double.PositiveInfinity
+      tmpOffset = 0
+      tmpDist = 0.0
+
+      for( i <- 0 until K){
+        tmpOffset = offset
+        tmpDist = 0.0
+        val tmpStartVertex = i*numDest
+        for(j <- 0 until numDest){
+          val tmpValue = WritableComparator.readDouble(buf,tmpOffset)-kPoints(tmpStartVertex+j)
+          tmpDist += tmpValue*tmpValue
+          tmpOffset += 8
+        }
+        if(tmpDist < minDistance){
+          minDistance = tmpDist
+          closestIndex = i
+        }
+      }
+
+      val startVertex = closestIndex*(numDest+1)
       for(i <- 0 until numDest){
-        result(closestPoint)._1(i) += WritableComparator.readDouble(buf,offset)
+        result(startVertex+i) += WritableComparator.readDouble(buf,offset)
         offset += 8
       }
-      result.update(closestPoint,(result(closestPoint)._1,result(closestPoint)._2+1))
+      result(startVertex+numDest) += 1
     }
 
     Iterator(result)
@@ -80,18 +78,10 @@ class KmeansChunk(size:Int,numDest:Int) extends ByteArrayOutputStream(size:Int) 
 
 object FlintKmeans {
 
-  def getSquarDistance(first:Array[Double],second:Array[Double]):Double={
-    var result = 0.0
-    for(i <- 0 until first.length){
-      result += (first(i)-second(i))*(first(i)-second(i))
-    }
-    result
-  }
-
   def main(args: Array[String]) {
 
     if (args.length < 3) {
-      System.err.println("Usage: SparkKMeans <file> <k> <convergeDist>")
+      System.err.println("Usage: SparkKMeans <file> <k> <convergeDist> <appName> <numDest>")
       System.exit(1)
     }
 
@@ -113,59 +103,77 @@ object FlintKmeans {
         parts.map(t => dos.writeDouble(t.toDouble))
       }
       Iterator(chunk)
-    }).persist(StorageLevel.MEMORY_AND_DISK)
+    },true).persist(StorageLevel.MEMORY_AND_DISK)
 
     data.foreach(_ => Unit)
 
-    var kPoints = data.mapPartitions( dIter => {
+    val kPointstmp = data.mapPartitions( dIter => {
       val chunk = dIter.next()
       chunk.getOriginal()
-    }).takeSample(withReplacement = false, K, 42).toArray
+    },true).takeSample(withReplacement = false, K, 42).toArray
+    var kPoints = new Array[Double](K*numDest)
+    for(i <- 0 until K){
+      for(j <- 0 until numDest) {
+        kPoints(i * numDest + j) = kPointstmp(i)(j)
+      }
+    }
 
     var terminate = 1.0
     var step = 1
 
     while(terminate > convergeDist){
 
+      val startTime = System.currentTimeMillis()
+
       val pointStats = data.mapPartitions( dIter => {
         val chunk = dIter.next()
         chunk.getPointStats(K,kPoints)
-      }).collect()
+      },true).collect()
 
-      val result = new Array[(Array[Double],Int)](K)
-      for(i <- 0 until K){
-        result.update(i,(new Array[Double](numDest),0))
-      }
+      val midTime = System.currentTimeMillis()
+      println("the RDD action time is "+(midTime-startTime)/1000.0 +"s")
+
+      val result = new Array[Double](K*(numDest+1))
 
       for(num <- 0 until pointStats.length){
-        val v = pointStats(num)
         for(i <- 0 until K){
-          for(j <- 0 until numDest){
-            result(i)._1(j) += v(i)._1(j)
+          val tmpStartVertex = i*(numDest+1)
+          for(j <- 0 to numDest){
+            result(tmpStartVertex+j) += pointStats(num)(tmpStartVertex+j)
           }
-          result.update(i,(result(i)._1,result(i)._2+v(i)._2))
         }
       }
-      val newPoints = result.map( pair => {
-        for(i <- 0 until numDest){
-          pair._1(i) = pair._1(i) / pair._2
+      val newPoints = new Array[Double](K*numDest)
+      for(i <- 0 until K){
+        val tmpStartVertex = i*(numDest+1)
+        for(j <- 0 until numDest){
+          newPoints(i*numDest+j) = result(tmpStartVertex+j)/result(tmpStartVertex+numDest)
         }
-        pair._1
-      })
+      }
 
       terminate = 0.0
       for(i <- 0 until K){
-        terminate += getSquarDistance(newPoints(i),kPoints(i))
+        val tmpStartVertex = i*numDest
+        for(j <- 0 until numDest) {
+          val tmpValue = kPoints(tmpStartVertex+j) - newPoints(tmpStartVertex+j)
+          terminate += tmpValue*tmpValue
+        }
       }
 
       kPoints = newPoints
 
-      println("Finished iteration "+step+" (delta = " + terminate + ")")
+      val endTime = System.currentTimeMillis()
+
+      println("Finished iteration "+step+" (delta = " + terminate + ") while time is " + (endTime-startTime)/1000.0 + "s")
       step += 1
     }
 
     println("Final centers:")
-    kPoints.foreach(t => println(t.mkString(";")))
+    for(i <- 0 until K) {
+      for (j <- 0 until numDest)
+        print(kPoints(i * numDest + j) + ";")
+      println()
+    }
     sc.stop()
   }
 

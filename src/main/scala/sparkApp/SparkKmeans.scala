@@ -3,6 +3,7 @@ package sparkApp
 import breeze.linalg.{Vector,DenseVector, squaredDistance}
 import org.apache.spark.SparkContext
 import org.apache.spark.SparkConf
+import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.StorageLevel
 
 /**
@@ -14,7 +15,7 @@ object SparkKmeans {
     DenseVector(line.split("\\s+").map(_.toDouble))
   }
 
-  def closestPoint(p: Vector[Double], centers: Array[Vector[Double]]): Int = {
+  def closestPoint(p: Vector[Double], centers: Array[DenseVector[Double]]): Int = {
     var bestIndex = 0
     var closest = Double.PositiveInfinity
 
@@ -38,8 +39,8 @@ object SparkKmeans {
 
     val sparkConf = new SparkConf().setAppName(args(3))
     val sc = new SparkContext(sparkConf)
-    val lines = sc.textFile(args(0))
-    val data = lines.map(parseVector _).persist(StorageLevel.MEMORY_AND_DISK)
+    val lines = sc.objectFile(args(0)).asInstanceOf[RDD[ObjectDenseVector]]
+    val data = lines.map(_.getValue()).persist(StorageLevel.MEMORY_AND_DISK)
     val K = args(1).toInt
     val convergeDist = args(2).toDouble
 
@@ -48,6 +49,9 @@ object SparkKmeans {
     var step = 1
 
     while(tempDist > convergeDist) {
+
+      val startTime = System.currentTimeMillis()
+
       val closest = data.map (p => (closestPoint(p, kPoints), (p, 1)))
 
       val pointStats = closest.reduceByKey{case ((x1, y1), (x2, y2)) => (x1 + x2, y1 + y2)}
@@ -63,7 +67,10 @@ object SparkKmeans {
       for (newP <- newPoints) {
         kPoints(newP._1) = newP._2
       }
-      println("Finished iteration "+step+" (delta = " + tempDist + ")")
+
+      val endTime = System.currentTimeMillis()
+
+      println("Finished iteration "+step+" (delta = " + tempDist + ") while time is "+(endTime-startTime)/1000.0 +"s")
       step += 1
     }
 
