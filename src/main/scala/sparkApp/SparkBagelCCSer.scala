@@ -17,6 +17,7 @@ object SparkBagelCCSer {
     val threshold = 0.1
     val numPartitions = args(1).toInt
     val usePartitioner = true
+    val iterations = args(4).toInt
 
     val sc = new SparkContext(sparkConf)
 
@@ -54,7 +55,7 @@ object SparkBagelCCSer {
       Bagel.run(
         sc, vertices, messages, combiner = new CCCombiner(),
         numPartitions = numPartitions,StorageLevel.MEMORY_AND_DISK_SER)(
-          utils.computeWithCombiner(numVertices, epsilon))
+          utils.computeWithCombiner(numVertices, epsilon,iterations))
 
     result.mapValues(_.value).saveAsTextFile(args(2))
     val count = result.mapValues(_.value).values.distinct().count()

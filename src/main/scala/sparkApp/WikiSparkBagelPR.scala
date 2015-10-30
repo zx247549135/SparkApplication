@@ -5,13 +5,14 @@ import org.apache.spark._
 import org.apache.spark.bagel.{Bagel, Combiner, Message, Vertex}
 import org.apache.spark.rdd.{RDD, ShuffledRDD}
 import org.apache.spark.serializer.KryoRegistrator
+import org.apache.spark.storage.StorageLevel
 
 /**
 * Created by root on 15-9-19.
 */
 
 class PageRankUtils extends Serializable {
-  def computeWithCombiner(numVertices: Long, epsilon: Double)(
+  def computeWithCombiner(numVertices: Long, epsilon: Double, step:Int)(
     self: PRVertex, messageSum: Option[Double], superstep: Int
     ): (PRVertex, Array[PRMessage]) = {
     val newValue = messageSum match {
@@ -20,7 +21,7 @@ class PageRankUtils extends Serializable {
       case _ => self.value
     }
 
-    val terminate = superstep >= 10
+    val terminate = superstep >= step
 
     val outbox: Array[PRMessage] =
       if (!terminate) {
@@ -32,10 +33,10 @@ class PageRankUtils extends Serializable {
     (new PRVertex(newValue, self.outEdges, !terminate), outbox)
   }
 
-  def computeNoCombiner(numVertices: Long, epsilon: Double)
+  def computeNoCombiner(numVertices: Long, epsilon: Double, step:Int)
                        (self: PRVertex, messages: Option[Array[PRMessage]], superstep: Int)
   : (PRVertex, Array[PRMessage]) =
-    computeWithCombiner(numVertices, epsilon)(self, messages match {
+    computeWithCombiner(numVertices, epsilon, step)(self, messages match {
       case Some(msgs) => Some(msgs.map(_.value).sum)
       case None => None
     }, superstep)
@@ -130,6 +131,7 @@ object WikiSparkBagelPR {
     val threshold = args(1).toDouble
     val numPartitions = args(2).toInt
     val usePartitioner = args(3).toBoolean
+    val iterations = args(1).toInt
 
     val sc = new SparkContext(sparkConf)
 
@@ -153,9 +155,9 @@ object WikiSparkBagelPR {
       (id,new PRVertex(1.0, list))
     })
     if (usePartitioner) {
-      vertices = vertices.partitionBy(new HashPartitioner(numPartitions)).cache
+      vertices = vertices.partitionBy(new HashPartitioner(numPartitions)).persist(StorageLevel.MEMORY_AND_DISK)
     } else {
-      vertices = vertices.cache
+      vertices = vertices.persist(StorageLevel.MEMORY_AND_DISK)
     }
     println("Done parsing input file.")
 
@@ -167,7 +169,7 @@ object WikiSparkBagelPR {
         Bagel.run(
           sc, vertices, messages, combiner = new PRCombiner(),
           numPartitions = numPartitions)(
-            utils.computeWithCombiner(numVertices, epsilon))
+            utils.computeWithCombiner(numVertices, epsilon,iterations))
 
     result.mapValues(_.value).saveAsTextFile(args(4))
     //result.foreach(t => println(t.toString()))

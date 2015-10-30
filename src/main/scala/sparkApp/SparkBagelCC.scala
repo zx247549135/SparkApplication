@@ -11,7 +11,7 @@ import org.apache.spark.{HashPartitioner, SparkContext, SparkConf}
  */
 
 class CCUtils extends Serializable {
-  def computeWithCombiner(numVertices: Long, epsilon: Double)(
+  def computeWithCombiner(numVertices: Long, epsilon: Double, step:Int)(
     self: CCVertex, messageSum: Option[Int], superstep: Int
     ): (CCVertex, Array[CCMessage]) = {
     val newValue = messageSum match {
@@ -19,7 +19,7 @@ class CCUtils extends Serializable {
       case _ => self.value
     }
 
-    val terminate = superstep >= 10
+    val terminate = superstep >= step
 
     val outbox: Array[CCMessage] =
       if (!terminate) {
@@ -91,6 +91,7 @@ object SparkBagelCC {
     val threshold = 0.1
     val numPartitions = args(1).toInt
     val usePartitioner = true
+    val iterations = args(4).toInt
 
     val sc = new SparkContext(sparkConf)
 
@@ -128,7 +129,7 @@ object SparkBagelCC {
       Bagel.run(
         sc, vertices, messages, combiner = new CCCombiner(),
         numPartitions = numPartitions)(
-          utils.computeWithCombiner(numVertices, epsilon))
+          utils.computeWithCombiner(numVertices, epsilon,iterations))
 
     result.mapValues(_.value).saveAsTextFile(args(2))
     val count = result.mapValues(_.value).values.distinct().count()

@@ -108,7 +108,7 @@ object FlintKmeans2 {
     val sparkConf=new SparkConf().setAppName(args(3))
     val sc=new SparkContext(sparkConf)
     val lines = sc.objectFile(args(0)).asInstanceOf[RDD[ObjectDenseVector]]
-    val data = lines.map(_.getValue().toArray).persist(StorageLevel.MEMORY_AND_DISK)
+    val data = lines.map(_.getValue().toArray)
 
     val k=args(1).toInt
     val D=args(4).toInt
@@ -124,7 +124,9 @@ object FlintKmeans2 {
         }
       }
       Iterator(chunk)
-    }.cache()
+    }.persist(StorageLevel.MEMORY_AND_DISK)
+
+    cachedPoints.foreach(_ => Unit)
 
     var tempDist=1.0
     var step = 1
